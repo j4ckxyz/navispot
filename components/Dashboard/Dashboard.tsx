@@ -345,11 +345,6 @@ export function Dashboard() {
       }
     })
 
-    if (isExportingRef.current) {
-      setTableItems(playlistItems)
-      return
-    }
-
     const likedSongsItem: PlaylistTableItem = {
       id: LIKED_SONGS_ID,
       name: "Liked Songs",
