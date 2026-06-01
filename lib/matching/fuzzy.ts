@@ -232,18 +232,15 @@ export function calculateTrackSimilarity(
 
   let baseSimilarity = artistSimilarity * 0.25 + titleSimilarity * 0.35 + durationSimilarity * 0.25 + albumSimilarity * 0.15;
 
-  if (titleSimilarity === 1.0) {
-    if (artistSimilarity >= 0.3) {
-      return Math.max(artistSimilarity * 0.2 + titleSimilarity * 0.4 + durationSimilarity * 0.3 + albumSimilarity * 0.1, 0.85);
-    }
-    return Math.max(artistSimilarity * 0.15 + titleSimilarity * 0.45 + durationSimilarity * 0.3 + albumSimilarity * 0.1, 0.75);
+  if (titleSimilarity === 1.0 && artistSimilarity >= 0.3) {
+    return Math.max(artistSimilarity * 0.2 + titleSimilarity * 0.4 + durationSimilarity * 0.3 + albumSimilarity * 0.1, 0.85);
   }
 
-  if (durationSimilarity >= 0.9) {
+  if (durationSimilarity >= 0.9 && artistSimilarity >= 0.3) {
     baseSimilarity = Math.min(baseSimilarity + 0.1, 0.95);
   }
 
-  if (albumSimilarity >= 0.8 && (titleSimilarity >= 0.6 || artistSimilarity >= 0.4)) {
+  if (albumSimilarity >= 0.8 && titleSimilarity >= 0.6 && artistSimilarity >= 0.4) {
     baseSimilarity = Math.min(baseSimilarity + 0.05, 0.95);
   }
 
