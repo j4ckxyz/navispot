@@ -3,7 +3,7 @@ import { NavidromeSong, NavidromeNativeSong } from '@/types/navidrome';
 import { TrackMatch, MatchStrategy, MatchStatus } from '@/types/matching';
 import { NavidromeApiClient } from '@/lib/navidrome/client';
 import { matchByStrict } from './strict-matcher';
-import { findBestMatch } from './fuzzy';
+import { findBestMatch, normalizeTitle, normalizeArtistName } from './fuzzy';
 
 export interface MatchingOrchestratorOptions {
   enableISRC: boolean;
@@ -85,7 +85,7 @@ export async function matchTrack(
 
   if (opts.enableISRC && spotifyTrack.external_ids?.isrc) {
     const isrc = spotifyTrack.external_ids.isrc;
-    const isrcMatch = candidates.find((song) => song.isrc?.[0] === isrc);
+    const isrcMatch = candidates.find((song) => song.isrc?.includes(isrc));
 
     if (isrcMatch) {
       return {
@@ -97,16 +97,27 @@ export async function matchTrack(
       };
     }
 
-    const durationMatch = candidates.find((song) => {
-      const navidromeDuration = song.duration;
-      const delta = Math.abs(navidromeDuration - spotifyDurationSec);
-      return delta < 2;
+    const normalizedSpotifyTitle = normalizeTitle(spotifyTrack.name);
+    const normalizedSpotifyArtists = spotifyTrack.artists.map((a) =>
+      normalizeArtistName(a.name)
+    );
+
+    const variantMatches = candidates.filter((song) => {
+      if (normalizeTitle(song.title) !== normalizedSpotifyTitle) return false;
+
+      const songArtist = normalizeArtistName(song.artist);
+      const artistOverlaps = normalizedSpotifyArtists.some(
+        (a) => a === songArtist || songArtist.includes(a) || a.includes(songArtist)
+      );
+      if (!artistOverlaps) return false;
+
+      return Math.abs(song.duration - spotifyDurationSec) < 2;
     });
 
-    if (durationMatch) {
+    if (variantMatches.length === 1) {
       return {
         spotifyTrack,
-        navidromeSong: durationMatch,
+        navidromeSong: variantMatches[0],
         matchStrategy: 'isrc',
         matchScore: 1,
         status: 'matched',
