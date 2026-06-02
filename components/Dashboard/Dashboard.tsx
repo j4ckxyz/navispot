@@ -42,6 +42,7 @@ import {
   savePlaylistExportData,
   getAllExportData,
   isPlaylistUpToDate,
+  deletePlaylistExportData,
   type PlaylistExportData,
   type TrackExportStatus,
 } from "@/lib/export/track-export-cache"
@@ -347,6 +348,7 @@ export function Dashboard() {
       }
     })
 
+    const likedSongsCachedData = trackExportCache.get(LIKED_SONGS_ID)
     const likedSongsItem: PlaylistTableItem = {
       id: LIKED_SONGS_ID,
       name: "Liked Songs",
@@ -356,7 +358,9 @@ export function Dashboard() {
       snapshot_id: "",
       isLikedSongs: true,
       selected: selectedIds.has(LIKED_SONGS_ID),
-      exportStatus: "none",
+      exportStatus: likedSongsCachedData?.exportedAt ? "exported" : "none",
+      navidromePlaylistId: undefined,
+      lastExportedAt: likedSongsCachedData?.exportedAt,
     }
 
     const allItems = [likedSongsItem, ...playlistItems]
@@ -468,7 +472,7 @@ export function Dashboard() {
 
     if (selectedIds.has(LIKED_SONGS_ID)) {
       const likedSongsCachedData = trackExportCache.get(LIKED_SONGS_ID)
-      const hasCachedExport = likedSongsCachedData?.navidromePlaylistId
+      const hasCachedExport = !!likedSongsCachedData?.exportedAt
 
       selectedPlaylists.push({
         id: LIKED_SONGS_ID,
@@ -882,6 +886,11 @@ export function Dashboard() {
           const savedTracks = await spotifyClient.getAllSavedTracks(signal)
           tracks = savedTracks.map((t) => t.track).filter((t) => t != null)
           isLikedSongs = true
+
+          // Check for cached export data (favorites have no navidromePlaylistId,
+          // so differential matching engages purely on cache presence)
+          cachedData = loadPlaylistExportData(item.id)
+          useDifferentialMatching = !!cachedData?.exportedAt
         } else {
           tracks = (await spotifyClient.getAllPlaylistTracks(item.id, signal)).map(
             (t) => t.track,
@@ -1203,17 +1212,68 @@ export function Dashboard() {
             },
           }
 
-          // Update cache for favorites export
-          if (cachedData) {
-            const updatedCache: PlaylistExportData = {
-              ...cachedData,
-              exportedAt: new Date().toISOString(),
+          // Persist full export cache for liked songs (mirrors regular
+          // playlist branch but with no navidromePlaylistId since favorites
+          // are starred individually rather than collected into a playlist)
+          const tracksData: Record<string, TrackExportStatus> = {}
+          let matchedCount = 0
+          let unmatchedCount = 0
+          let ambiguousCount = 0
+
+          matches.forEach((match) => {
+            const track = match.spotifyTrack
+            const isFromCache =
+              cachedData?.tracks[track.id] &&
+              !newTracks.some((t) => t.id === track.id)
+
+            if (isFromCache && cachedData) {
+              tracksData[track.id] = cachedData.tracks[track.id]
+              const cachedStatus = cachedData.tracks[track.id]
+              if (cachedStatus.status === "matched") {
+                matchedCount++
+              } else if (cachedStatus.status === "ambiguous") {
+                ambiguousCount++
+              } else {
+                unmatchedCount++
+              }
+            } else {
+              tracksData[track.id] = {
+                spotifyTrackId: track.id,
+                navidromeSongId: match.navidromeSong?.id,
+                status: match.status,
+                matchStrategy: match.matchStrategy,
+                matchScore: match.matchScore,
+                matchedAt: new Date().toISOString(),
+              }
+
+              if (match.status === "matched") {
+                matchedCount++
+              } else if (match.status === "ambiguous") {
+                ambiguousCount++
+              } else {
+                unmatchedCount++
+              }
             }
-            savePlaylistExportData(item.id, updatedCache)
-            setTrackExportCache((prev) =>
-              new Map(prev).set(item.id, updatedCache),
-            )
+          })
+
+          const updatedCache: PlaylistExportData = {
+            spotifyPlaylistId: item.id,
+            spotifySnapshotId: "",
+            playlistName: item.name,
+            exportedAt: new Date().toISOString(),
+            trackCount: tracks.length,
+            tracks: tracksData,
+            statistics: {
+              total: tracks.length,
+              matched: matchedCount,
+              unmatched: unmatchedCount,
+              ambiguous: ambiguousCount,
+            },
           }
+          savePlaylistExportData(item.id, updatedCache)
+          setTrackExportCache((prev) =>
+            new Map(prev).set(item.id, updatedCache),
+          )
 
           if (i === itemsToExport.length - 1) {
             setShowSuccess(true)
@@ -1401,6 +1461,21 @@ export function Dashboard() {
       setShowCancelConfirmation(true)
     }
   }
+
+  // Invoked by SettingsModal after a successful "Remove all favorites"
+  // (or any operation that mutates the actual Navidrome favorites state
+  // out-of-band). Clears the Liked Songs export cache so the next export
+  // re-matches and re-stars from scratch instead of skipping tracks the
+  // diff matcher still believes are matched.
+  const handleLikedSongsCacheInvalidated = useCallback(() => {
+    deletePlaylistExportData(LIKED_SONGS_ID)
+    setTrackExportCache((prev) => {
+      if (!prev.has(LIKED_SONGS_ID)) return prev
+      const next = new Map(prev)
+      next.delete(LIKED_SONGS_ID)
+      return next
+    })
+  }, [])
 
   const handleConfirmCancel = () => {
     abortControllerRef.current?.abort()
@@ -1729,6 +1804,7 @@ export function Dashboard() {
       <SettingsModal
         isOpen={showSettings}
         onClose={() => setShowSettings(false)}
+        onLikedSongsCacheInvalidated={handleLikedSongsCacheInvalidated}
       />
       
       <ExportLayoutManager

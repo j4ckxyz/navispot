@@ -7,6 +7,7 @@ import { useAuth } from "@/lib/auth/auth-context"
 interface SettingsModalProps {
   isOpen: boolean
   onClose: () => void
+  onLikedSongsCacheInvalidated?: () => void
 }
 
 type SettingsSection = "data"
@@ -22,7 +23,11 @@ type ActionStatus =
   | { kind: "success"; removed: number }
   | { kind: "error"; message: string; partiallyRemoved: number }
 
-export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
+export function SettingsModal({
+  isOpen,
+  onClose,
+  onLikedSongsCacheInvalidated,
+}: SettingsModalProps) {
   const { navidrome } = useAuth()
   const [activeSection, setActiveSection] = useState<SettingsSection>("data")
   const [showConfirm, setShowConfirm] = useState(false)
@@ -79,6 +84,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
       if (starred.length === 0) {
         setStatus({ kind: "success", removed: 0 })
+        onLikedSongsCacheInvalidated?.()
         return
       }
 
@@ -98,10 +104,14 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
           message: result.error || "Failed to remove favorites.",
           partiallyRemoved: result.processed,
         })
+        if (result.processed > 0) {
+          onLikedSongsCacheInvalidated?.()
+        }
         return
       }
 
       setStatus({ kind: "success", removed: result.processed })
+      onLikedSongsCacheInvalidated?.()
     } catch (err) {
       setStatus({
         kind: "error",
