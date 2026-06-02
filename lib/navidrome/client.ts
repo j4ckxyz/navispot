@@ -145,7 +145,7 @@ export class NavidromeApiClient {
     return `enc:${Buffer.from(password, 'utf-8').toString('hex')}`;
   }
 
-  private _buildSubsonicUrl(endpoint: string, params: Record<string, string | undefined> = {}): string {
+  private _buildSubsonicUrl(endpoint: string, params: Record<string, string | string[] | undefined> = {}): string {
     const searchParams = new URLSearchParams();
     searchParams.set('u', this.username);
     searchParams.set('p', this._generateHexPassword(this.password));
@@ -155,6 +155,12 @@ export class NavidromeApiClient {
 
     Object.entries(params).forEach(([key, value]) => {
       if (value === undefined) return;
+      if (Array.isArray(value)) {
+        for (const v of value) {
+          searchParams.append(key, v);
+        }
+        return;
+      }
       searchParams.set(key, value);
     });
 
@@ -545,7 +551,7 @@ export class NavidromeApiClient {
     }
 
     try {
-      const url = this._buildSubsonicUrl('/rest/star', { id: songIds.join(',') });
+      const url = this._buildSubsonicUrl('/rest/star', { id: songIds });
       const response = await fetch(url);
 
       if (!response.ok) {
@@ -587,6 +593,62 @@ export class NavidromeApiClient {
       return { success: true };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  }
+
+  /**
+   * Unstars (removes from favorites) multiple songs in Navidrome in batches.
+   * Uses the Subsonic API GET endpoint with comma-separated IDs.
+   *
+   * @param songIds - The IDs of the songs to unstar
+   * @param onProgress - Optional callback invoked with the number of processed songs after each batch
+   * @returns Promise resolving to an object with success status, processed count, and optional error message
+   */
+  async unstarSongs(
+    songIds: string[],
+    onProgress?: (processed: number, total: number) => void,
+  ): Promise<{ success: boolean; processed: number; error?: string }> {
+    if (songIds.length === 0) {
+      return { success: true, processed: 0 };
+    }
+
+    const BATCH_SIZE = 50;
+    let processed = 0;
+
+    try {
+      for (let i = 0; i < songIds.length; i += BATCH_SIZE) {
+        const batch = songIds.slice(i, i + BATCH_SIZE);
+        const url = this._buildSubsonicUrl('/rest/unstar', { id: batch });
+        const response = await fetch(url);
+
+        if (!response.ok) {
+          return {
+            success: false,
+            processed,
+            error: `HTTP error: ${response.status} ${response.statusText}`,
+          };
+        }
+
+        const data = await response.json();
+        if (data['subsonic-response']?.status === 'failed') {
+          return {
+            success: false,
+            processed,
+            error: data['subsonic-response']?.error?.message || 'Unstar operation failed',
+          };
+        }
+
+        processed += batch.length;
+        onProgress?.(processed, songIds.length);
+      }
+
+      return { success: true, processed };
+    } catch (error) {
+      return {
+        success: false,
+        processed,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
     }
   }
 
