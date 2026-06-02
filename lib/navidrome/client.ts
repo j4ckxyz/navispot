@@ -545,27 +545,68 @@ export class NavidromeApiClient {
     }
   }
 
-  async starSongs(songIds: string[]): Promise<{ success: boolean; error?: string }> {
+  /**
+   * Stars (favorites) multiple songs in Navidrome in batches.
+   * Uses the Subsonic API GET endpoint with repeated `id` query parameters.
+   *
+   * @param songIds - The IDs of the songs to star
+   * @param onProgress - Optional callback invoked with the number of processed songs after each batch
+   * @param signal - Optional AbortSignal to cancel the operation
+   * @returns Promise resolving to an object with success status, processed count, and optional error message
+   */
+  async starSongs(
+    songIds: string[],
+    onProgress?: (processed: number, total: number) => void,
+    signal?: AbortSignal,
+  ): Promise<{ success: boolean; processed: number; error?: string }> {
     if (songIds.length === 0) {
-      return { success: true };
+      return { success: true, processed: 0 };
     }
 
+    const BATCH_SIZE = 50;
+    let processed = 0;
+
     try {
-      const url = this._buildSubsonicUrl('/rest/star', { id: songIds });
-      const response = await fetch(url);
+      for (let i = 0; i < songIds.length; i += BATCH_SIZE) {
+        if (signal?.aborted) {
+          throw new DOMException('Star operation was cancelled', 'AbortError');
+        }
 
-      if (!response.ok) {
-        return { success: false, error: `HTTP error: ${response.status} ${response.statusText}` };
+        const batch = songIds.slice(i, i + BATCH_SIZE);
+        const url = this._buildSubsonicUrl('/rest/star', { id: batch });
+        const response = await fetch(url, { signal });
+
+        if (!response.ok) {
+          return {
+            success: false,
+            processed,
+            error: `HTTP error: ${response.status} ${response.statusText}`,
+          };
+        }
+
+        const data = await response.json();
+        if (data['subsonic-response']?.status === 'failed') {
+          return {
+            success: false,
+            processed,
+            error: data['subsonic-response']?.error?.message || 'Star operation failed',
+          };
+        }
+
+        processed += batch.length;
+        onProgress?.(processed, songIds.length);
       }
 
-      const data = await response.json();
-      if (data['subsonic-response']?.status === 'failed') {
-        return { success: false, error: data['subsonic-response']?.error?.message || 'Star operation failed' };
-      }
-
-      return { success: true };
+      return { success: true, processed };
     } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        throw error;
+      }
+      return {
+        success: false,
+        processed,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
     }
   }
 
@@ -598,15 +639,17 @@ export class NavidromeApiClient {
 
   /**
    * Unstars (removes from favorites) multiple songs in Navidrome in batches.
-   * Uses the Subsonic API GET endpoint with comma-separated IDs.
+   * Uses the Subsonic API GET endpoint with repeated `id` query parameters.
    *
    * @param songIds - The IDs of the songs to unstar
    * @param onProgress - Optional callback invoked with the number of processed songs after each batch
+   * @param signal - Optional AbortSignal to cancel the operation
    * @returns Promise resolving to an object with success status, processed count, and optional error message
    */
   async unstarSongs(
     songIds: string[],
     onProgress?: (processed: number, total: number) => void,
+    signal?: AbortSignal,
   ): Promise<{ success: boolean; processed: number; error?: string }> {
     if (songIds.length === 0) {
       return { success: true, processed: 0 };
@@ -617,9 +660,13 @@ export class NavidromeApiClient {
 
     try {
       for (let i = 0; i < songIds.length; i += BATCH_SIZE) {
+        if (signal?.aborted) {
+          throw new DOMException('Unstar operation was cancelled', 'AbortError');
+        }
+
         const batch = songIds.slice(i, i + BATCH_SIZE);
         const url = this._buildSubsonicUrl('/rest/unstar', { id: batch });
-        const response = await fetch(url);
+        const response = await fetch(url, { signal });
 
         if (!response.ok) {
           return {
@@ -644,6 +691,9 @@ export class NavidromeApiClient {
 
       return { success: true, processed };
     } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        throw error;
+      }
       return {
         success: false,
         processed,

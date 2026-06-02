@@ -64,45 +64,53 @@ export class DefaultFavoritesExporter implements FavoritesExporter {
       };
     }
 
-    for (let i = 0; i < matchedTracks.length; i++) {
-      checkAbort();
-      const match = matchedTracks[i];
-      const songId = match.navidromeSong!.id;
-      const trackName = match.spotifyTrack.name;
-      const artistName = match.spotifyTrack.artists?.[0]?.name || 'Unknown';
+    const ids = matchedTracks.map((m) => m.navidromeSong!.id);
 
-      if (onProgress) {
-        checkAbort();
-        await onProgress({
-          current: i + 1,
-          total: matchedTracks.length,
-          percent: Math.round(((i + 1) / matchedTracks.length) * 100),
-          currentTrack: `${trackName} - ${artistName}`,
-          status: 'exporting',
-        });
+    let starResult: { success: boolean; processed: number; error?: string };
+    try {
+      starResult = await this.navidromeClient.starSongs(
+        ids,
+        (processed, total) => {
+          if (!onProgress) return;
+          const idx = Math.max(0, Math.min(processed - 1, matchedTracks.length - 1));
+          const match = matchedTracks[idx];
+          const trackName = match.spotifyTrack.name;
+          const artistName = match.spotifyTrack.artists?.[0]?.name || 'Unknown';
+          void Promise.resolve(
+            onProgress({
+              current: processed,
+              total,
+              percent: Math.round((processed / total) * 100),
+              currentTrack: `${trackName} - ${artistName}`,
+              status: 'exporting',
+            }),
+          );
+        },
+        signal,
+      );
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        throw error;
       }
+      starResult = {
+        success: false,
+        processed: 0,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
 
-      try {
-        const result = await this.starSong(songId, signal);
-        if (result.success) {
-          starred++;
-        } else {
-          failed++;
-          errors.push({
-            trackName,
-            artistName,
-            reason: 'Failed to star song',
-          });
-        }
-      } catch (error) {
-        if (error instanceof DOMException && error.name === 'AbortError') {
-          throw error;
-        }
-        failed++;
+    if (starResult.success) {
+      starred = matchedTracks.length;
+    } else {
+      starred = starResult.processed;
+      failed = matchedTracks.length - starResult.processed;
+      const reason = starResult.error || 'Failed to star song';
+      for (let i = starResult.processed; i < matchedTracks.length; i++) {
+        const match = matchedTracks[i];
         errors.push({
-          trackName,
-          artistName,
-          reason: error instanceof Error ? error.message : 'Unknown error',
+          trackName: match.spotifyTrack.name,
+          artistName: match.spotifyTrack.artists?.[0]?.name || 'Unknown',
+          reason,
         });
       }
     }
@@ -147,27 +155,13 @@ export class DefaultFavoritesExporter implements FavoritesExporter {
       return { success: true, failedIds: [] };
     }
 
-    const failedIds: string[] = [];
-
-    const results = await Promise.all(
-      songIds.map(async (songId) => {
-        const result = await this.starSong(songId, signal);
-        return { songId, success: result.success };
-      })
-    );
-
-    for (const { songId, success } of results) {
-      if (!success) {
-        failedIds.push(songId);
-      }
+    const result = await this.navidromeClient.starSongs(songIds, undefined, signal);
+    if (result.success) {
+      return { success: true, failedIds: [] };
     }
 
-    const allSuccessful = failedIds.length === 0;
-
-    return {
-      success: allSuccessful,
-      failedIds,
-    };
+    const failedIds = songIds.slice(result.processed);
+    return { success: false, failedIds };
   }
 }
 
