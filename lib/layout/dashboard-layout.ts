@@ -43,18 +43,18 @@ export const DASHBOARD_LAYOUT_OPTIONS: DashboardLayoutOption[] = [
     id: "default",
     name: "Default",
     description:
-      "All three tables. Selected playlists and unmatched songs share the top row, main table fills the bottom.",
+      "All three tables. Selected playlists and unmatched songs share the top row, main table fills the bottom. Best for large screens (1024px+).",
   },
   {
     id: "horizontal",
     name: "Horizontal",
     description:
-      "Top-left table hidden. The unmatched songs table takes the full top width, with the main table below.",
+      "Top-left table hidden. The unmatched songs table takes the full top width, with the main table below. Best for medium screens (768px+).",
   },
   {
     id: "vertical",
     name: "Vertical",
     description:
-      "Top-left table hidden. Main playlist table and unmatched songs sit side by side, each taking half the width and the full available height.",
+      "Top-left table hidden. Main playlist table and unmatched songs sit side by side, each taking half the width and the full available height. Best for wide desktop screens (1280px+).",
   },
 ];
