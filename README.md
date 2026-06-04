@@ -81,6 +81,7 @@ Unmatched tracks can be exported as JSON for later addition to Navidrome.
 
 - Node.js 18.17+
 - Spotify Developer account
+- Spotify Premium account (required for Web API access)
 - Running Navidrome instance
 
 ### Local Development
@@ -98,6 +99,8 @@ cp .env.example .env.local
 # Run
 bun dev
 ```
+
+> **Note:** Spotify requires HTTPS for redirect URIs. If you're developing locally, use `bun dev --experimental-https` instead of `bun dev`. This generates a self-signed cert and serves your app over HTTPS at `https://localhost:3000`. You may also need to use your local network address (e.g., `https://192.168.x.x:3000`) and add it as a redirect URI in the Spotify Developer Dashboard.
 
 **Spotify Setup:**
 
