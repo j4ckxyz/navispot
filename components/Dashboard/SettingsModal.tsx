@@ -14,9 +14,11 @@ interface SettingsModalProps {
   onLikedSongsCacheInvalidated?: () => void
   layout: DashboardLayout
   onLayoutChange: (layout: DashboardLayout) => void
+  forceExportPlaylists: boolean
+  onForceExportChange: (enabled: boolean) => void
 }
 
-type SettingsSection = "data" | "layout"
+type SettingsSection = "data" | "layout" | "export"
 
 interface UnstarProgress {
   processed: number
@@ -35,6 +37,8 @@ export function SettingsModal({
   onLikedSongsCacheInvalidated,
   layout,
   onLayoutChange,
+  forceExportPlaylists,
+  onForceExportChange,
 }: SettingsModalProps) {
   const { navidrome } = useAuth()
   const [activeSection, setActiveSection] = useState<SettingsSection>("data")
@@ -207,6 +211,20 @@ export function SettingsModal({
               >
                 Layout
               </button>
+              <button
+                role="tab"
+                aria-selected={activeSection === "export"}
+                aria-controls="settings-panel-export"
+                id="settings-tab-export"
+                onClick={() => setActiveSection("export")}
+                className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all cursor-pointer ${
+                  activeSection === "export"
+                    ? "bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 shadow-sm"
+                    : "text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100"
+                }`}
+              >
+                Export
+              </button>
             </div>
           </div>
 
@@ -375,6 +393,58 @@ export function SettingsModal({
                       </button>
                     )
                   })}
+                </div>
+              </div>
+            )}
+
+            {activeSection === "export" && (
+              <div
+                role="tabpanel"
+                id="settings-panel-export"
+                aria-labelledby="settings-tab-export"
+                className="space-y-6"
+              >
+                <div>
+                  <h3 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">
+                    Export
+                  </h3>
+                  <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+                    Configure how playlists are exported to Navidrome.
+                  </p>
+                </div>
+
+                <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                      <h4 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                        Force export playlists
+                      </h4>
+                      <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+                        Creates new playlists instead of updating existing ones.
+                        Useful when you want a fresh copy of your playlists in
+                        Navidrome.
+                      </p>
+                    </div>
+                    <button
+                      role="switch"
+                      aria-checked={forceExportPlaylists}
+                      onClick={() => onForceExportChange(!forceExportPlaylists)}
+                      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${
+                        forceExportPlaylists
+                          ? "bg-green-500"
+                          : "bg-zinc-200 dark:bg-zinc-700"
+                      }`}
+                    >
+                      <span
+                        aria-hidden="true"
+                        className={`pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-lg ring-0 transition-transform ${
+                          forceExportPlaylists
+                            ? "translate-x-5"
+                            : "translate-x-0"
+                        }`}
+                      />
+                    </button>
+                  </div>
                 </div>
               </div>
             )}

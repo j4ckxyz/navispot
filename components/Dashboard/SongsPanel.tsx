@@ -218,7 +218,7 @@ export function SongsPanel({
             </label>
             <button
               onClick={handleDownloadUnmatched}
-              className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors"
+              className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors cursor-pointer"
               title="Download unmatched songs as JSON"
             >
               <svg

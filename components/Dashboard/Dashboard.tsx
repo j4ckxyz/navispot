@@ -43,6 +43,10 @@ import {
   saveDashboardLayout,
 } from "@/lib/layout/dashboard-layout"
 import {
+  loadForceExportPlaylists,
+  saveForceExportPlaylists,
+} from "@/lib/settings/export-settings"
+import {
   loadPlaylistExportData,
   savePlaylistExportData,
   getAllExportData,
@@ -108,6 +112,9 @@ export function Dashboard() {
   const [showSettings, setShowSettings] = useState(false)
   const [layout, setLayout] = useState<DashboardLayout>(() =>
     loadDashboardLayout(),
+  )
+  const [forceExportPlaylists, setForceExportPlaylists] = useState<boolean>(() =>
+    loadForceExportPlaylists(),
   )
   const [currentUnmatchedPlaylistId, setCurrentUnmatchedPlaylistId] = useState<
     string | null
@@ -1292,14 +1299,17 @@ export function Dashboard() {
             setIsExporting(false)
           }
         } else {
+          const forceCreate = forceExportPlaylists
           const exporterOptions: PlaylistExporterOptions = {
             mode:
-              useDifferentialMatching && cachedData?.navidromePlaylistId
+              !forceCreate && useDifferentialMatching && cachedData?.navidromePlaylistId
                 ? "update"
                 : "create",
-            existingPlaylistId: cachedData?.navidromePlaylistId,
+            existingPlaylistId:
+              !forceCreate ? cachedData?.navidromePlaylistId : undefined,
             skipUnmatched: false,
-            cachedData: useDifferentialMatching ? cachedData : undefined,
+            cachedData:
+              !forceCreate && useDifferentialMatching ? cachedData : undefined,
             signal,
             onProgress: async (exportProgress) => {
               progress = updateProgress(progress, {
@@ -1490,6 +1500,11 @@ export function Dashboard() {
     saveDashboardLayout(next)
   }, [])
 
+  const handleForceExportChange = useCallback((enabled: boolean) => {
+    setForceExportPlaylists(enabled)
+    saveForceExportPlaylists(enabled)
+  }, [])
+
   const handleConfirmCancel = () => {
     abortControllerRef.current?.abort()
     isExportingRef.current = false
@@ -1610,7 +1625,7 @@ export function Dashboard() {
               isExporting ? handleCancelExport : () => setShowConfirmation(true)
             }
             disabled={!isExporting && selectedIds.size === 0}
-            className={`rounded-lg px-4 py-2 text-sm font-medium shadow-lg transition-all hover:shadow-xl disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:shadow-lg hover:shadow-xl ${
+            className={`rounded-lg px-4 py-2 text-sm font-medium shadow-lg transition-all hover:shadow-xl disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:shadow-lg hover:shadow-xl cursor-pointer ${
               isExporting
                 ? "bg-red-500 hover:bg-red-600 text-white"
                 : "bg-blue-500 hover:bg-blue-600 text-white"
@@ -1823,6 +1838,8 @@ export function Dashboard() {
         onLikedSongsCacheInvalidated={handleLikedSongsCacheInvalidated}
         layout={layout}
         onLayoutChange={handleLayoutChange}
+        forceExportPlaylists={forceExportPlaylists}
+        onForceExportChange={handleForceExportChange}
       />
       
       <ExportLayoutManager
