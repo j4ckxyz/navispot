@@ -905,7 +905,7 @@ export function Dashboard() {
           // Check for cached export data (favorites have no navidromePlaylistId,
           // so differential matching engages purely on cache presence)
           cachedData = loadPlaylistExportData(item.id)
-          useDifferentialMatching = !!cachedData?.exportedAt
+          useDifferentialMatching = !forceExportPlaylists && !!cachedData?.exportedAt
         } else {
           tracks = (await spotifyClient.getAllPlaylistTracks(item.id, signal)).map(
             (t) => t.track,
@@ -917,7 +917,7 @@ export function Dashboard() {
             ? isPlaylistUpToDate(cachedData, item.snapshot_id || "")
             : false
           const hasNavidromePlaylist = !!cachedData?.navidromePlaylistId
-          useDifferentialMatching = hasNavidromePlaylist
+          useDifferentialMatching = !forceExportPlaylists && hasNavidromePlaylist
         }
 
         progress = updateProgress(progress, {

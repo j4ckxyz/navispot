@@ -420,9 +420,9 @@ export function SettingsModal({
                         Force export playlists
                       </h4>
                       <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-                        Creates new playlists instead of updating existing ones.
-                        Useful when you want a fresh copy of your playlists in
-                        Navidrome.
+                        Re-exports playlists from scratch, bypassing the local
+                        cache. All tracks are re-matched and a new playlist is
+                        created in Navidrome.
                       </p>
                     </div>
                     <button
