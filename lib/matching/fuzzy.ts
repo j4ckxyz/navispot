@@ -119,7 +119,6 @@ const LIVE_INDICATORS = [
   '(live)',
   '-live',
   '[live]',
-  'live'
 ];
 
 const COLLABORATION_INDICATORS = [
@@ -136,7 +135,13 @@ const COLLABORATION_INDICATORS = [
 const TITLE_SUFFIX_PATTERN = /[\(\[].*?[\)\]]\s*$|[-–—~/].*$/;
 
 export function stripTitleSuffix(title: string): string {
-  return title.replace(TITLE_SUFFIX_PATTERN, '').trim();
+  let result = title;
+  let prev = '';
+  while (result !== prev) {
+    prev = result;
+    result = result.replace(TITLE_SUFFIX_PATTERN, '').trim();
+  }
+  return result;
 }
 
 export function normalizeAlbumName(album: string): string {
@@ -148,10 +153,15 @@ export function normalizeAlbumName(album: string): string {
   return normalized.replace(/\s+/g, ' ').trim();
 }
 
+const FEATURED_ARTIST_PATTERN = /[\(\[]\s*(?:feat\.?|ft\.?|featuring)\s+[^\)\]]*[\)\]]/gi;
+
 export function normalizeTitle(title: string): string {
   let normalized = title.toLowerCase();
+  // Remove parenthetical/bracket groups containing featured artists
+  // e.g. "(feat. Kehlani & Lil Yachty)", "[ft. Someone]"
+  normalized = normalized.replace(FEATURED_ARTIST_PATTERN, ' ');
   for (const indicator of LIVE_INDICATORS) {
-    normalized = normalized.replace(new RegExp(indicator.replace(/[()]/g, '\\$&'), 'gi'), ' ');
+    normalized = normalized.replace(new RegExp(indicator.replace(/[[\]()]/g, '\\$&'), 'gi'), ' ');
   }
   normalized = normalizeString(normalized);
   return normalized.replace(/\s+/g, ' ').trim();
@@ -160,7 +170,7 @@ export function normalizeTitle(title: string): string {
 export function normalizeArtistName(artist: string): string {
   let normalized = artist.toLowerCase();
   for (const indicator of COLLABORATION_INDICATORS) {
-    normalized = normalized.replace(new RegExp(indicator.replace(/[()]/g, '\\$&'), 'gi'), ' ');
+    normalized = normalized.replace(new RegExp(indicator.replace(/[[\]()]/g, '\\$&'), 'gi'), ' ');
   }
   normalized = normalizeString(normalized);
   return normalized.replace(/\s+/g, ' ').trim();
