@@ -36,27 +36,54 @@
 
 ## ✨ Features
 
-- **🔗 Dual Integration** – Connect Spotify & Navidrome simultaneously
+- **🌐 Public Playlist Import** – Paste any public Spotify playlist URL to export it to Navidrome, no Spotify login required
+- **🔐 Two Auth Paths** – Connect your Spotify account for personal/private exports, or skip Spotify and use only Navidrome
 - **🎯 Smart Matching** – ISRC, fuzzy, and strict matching strategies
-- **📊 Batch Export** – Export multiple playlists at once
+- **📊 Batch Export** – Export multiple playlists at once (mix Spotify-owned and imported in one batch)
 - **🔄 Differential Exporting** – Sync only new tracks (single browser session)
 - **📤 JSON Export** – Export unmatched tracks as JSON
 - **⚡ Real-time Progress** – Live export tracking with match statistics
 - **👁️ Export Preview** – Review matches before committing
+- **🧹 Clear Imported** – One-click button with confirmation modal to wipe all imported playlists
 
 ---
 
 ## 🚀 Quick Start
 
-1. **Connect** – Login to Spotify and enter Navidrome credentials
-2. **Select** – Browse and check playlists to export
-3. **Export** – Review matches and start the transfer
+### Path A: With Spotify (full library access)
+
+1. **Connect Spotify** – Click "Connect Spotify" and authorize the app
+2. **Enter Navidrome** – Fill in your Navidrome server URL, username, and password
+3. **Select & Export** – Browse your playlists, check what to export, click Export
+
+### Path B: Without Spotify (public playlists only)
+
+1. **Enter Navidrome** – Fill in your Navidrome server URL, username, and password
+2. **Click "Continue without Spotify"** on the login page
+3. **Paste a public Spotify playlist URL** into the search box on the dashboard
+4. **Click Import** (the green button next to the search box)
+5. **Select & Export** – The imported playlist is auto-selected; click Export
+
+> **Tip:** The search field does double duty — type text to filter, or paste a Spotify URL and the import button enables automatically.
 
 ---
 
 ## 🎯 How It Works
 
-**Matching Strategy Chain:**
+### Two Spotify Access Modes
+
+**OAuth (User Auth) – for personal/private libraries**
+Standard Authorization Code with PKCE flow. Requires the user to log in to Spotify. Used for accessing the logged-in user's own playlists, liked songs, and private content. This is the "Extended Quota" mode in Spotify's terminology and requires the user to be on the app's allowlist (in development mode) or the app to be in production.
+
+**Client Credentials (Server Auth) – for public playlists only**
+The server exchanges the app's `client_id` + `client_secret` for a short-lived token, then uses that to call the public Spotify Web API. This works in Spotify's **Development Mode** without needing Extended Quota, because the calls aren't tied to a specific user. Limitations:
+- Only **public** playlists can be fetched
+- Private playlists return 404 (Spotify hides existence)
+- Server-side rate limits apply (we cache the token for its full 1-hour lifetime)
+
+This is what powers the public-playlist import — your dev-mode Spotify keys are sufficient.
+
+### Matching Strategy Chain
 
 1. **ISRC** → Exact match via unique recording code
 2. **Fuzzy** → Similarity matching (80% threshold)
@@ -81,7 +108,7 @@ Unmatched tracks can be exported as JSON for later addition to Navidrome.
 
 - Node.js 18.17+
 - Spotify Developer account
-- Spotify Premium account (required for Web API access)
+- Spotify account — **Premium is only required if you want to export your own personal/private playlists.** Public playlist imports work with a free Spotify account (or no Spotify account at all — only your app's dev-mode keys are used).
 - Running Navidrome instance
 
 ### Local Development
@@ -185,7 +212,14 @@ We appreciate detailed reports that help us improve NaviSpot for everyone!
 - **Framework:** Next.js 16 (App Router)
 - **Language:** TypeScript
 - **Styling:** Tailwind CSS
-- **APIs:** Spotify Web API, Navidrome Subsonic API
+- **APIs:** Spotify Web API (User Auth + Client Credentials), Navidrome Subsonic API
+- **HTTP (server-side):** Node's built-in `https` module for the public-client flow (bypasses `undici` connection timeouts that some environments hit with `fetch`)
+
+### Spotify App Configuration Notes
+
+- The app only requests three scopes: `playlist-read-private`, `playlist-read-collaborative`, `user-library-read`. No write scopes.
+- In **Development Mode**, only the app owner and explicitly added users can complete the OAuth flow. The Client Credentials flow (used for public playlist imports) has no such restriction — your dev-mode keys are enough.
+- The public-client server route caches the Client Credentials token in memory for its full 1-hour lifetime, so repeated imports of public playlists don't re-authenticate.
 
 ---
 
