@@ -14,6 +14,14 @@ export interface PlaylistTableItem {
   createdAt?: string;
   isImported?: boolean;
   trackCount?: number;
+  /** Set for library pseudo-sources (Liked Songs, Saved Albums, Top Tracks, Followed Artists). */
+  librarySourceId?: string;
+  /** Tailwind gradient classes for the art tile of a library source. */
+  gradient?: string;
+  /** SVG path for the art tile of a library source. */
+  iconPath?: string;
+  /** Label shown in the Tracks column unit, e.g. "albums" / "artists". */
+  countUnit?: 'tracks' | 'albums' | 'artists';
 }
 
 export interface ExportMetadata {

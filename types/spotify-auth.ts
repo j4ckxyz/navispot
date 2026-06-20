@@ -27,4 +27,6 @@ export const SPOTIFY_SCOPES = [
   'playlist-read-private',
   'playlist-read-collaborative',
   'user-library-read',
+  'user-follow-read',
+  'user-top-read',
 ];
