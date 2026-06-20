@@ -50,6 +50,67 @@ export interface SpotifySavedTrack {
   track: SpotifyTrack;
 }
 
+export interface SpotifyAlbum {
+  id: string;
+  name: string;
+  artists: { id: string; name: string }[];
+  images: { url: string }[];
+  release_date: string;
+  total_tracks: number;
+  external_ids?: { upc?: string };
+  tracks: {
+    items: SpotifyTrack[];
+    total: number;
+    next?: string;
+    limit: number;
+    offset: number;
+  };
+}
+
+export interface SpotifySavedAlbum {
+  added_at: string;
+  album: SpotifyAlbum;
+}
+
+export interface SpotifySavedAlbumsResponse {
+  href: string;
+  items: SpotifySavedAlbum[];
+  limit: number;
+  next?: string;
+  previous?: string;
+  offset: number;
+  total: number;
+}
+
+export interface SpotifyArtist {
+  id: string;
+  name: string;
+  images: { url: string }[];
+  genres?: string[];
+}
+
+export interface SpotifyFollowedArtistsResponse {
+  artists: {
+    items: SpotifyArtist[];
+    next?: string;
+    total: number;
+    cursors: { after?: string };
+    limit: number;
+  };
+}
+
+export interface SpotifyTopTracksResponse {
+  items: SpotifyTrack[];
+  total: number;
+  limit: number;
+  offset: number;
+  next?: string;
+}
+
+export interface SpotifyArtistTopTracksResponse {
+  tracks: SpotifyTrack[];
+}
+
 export interface SpotifySavedTracksResponse {
   href: string;
   items: SpotifySavedTrack[];

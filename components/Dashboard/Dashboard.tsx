@@ -58,6 +58,18 @@ import {
 import { PlaylistTableItem, PlaylistInfo } from "@/types/playlist-table"
 import { TrackMatch } from "@/types/matching"
 import { ImportedPlaylist } from "@/types/public-playlist"
+import {
+  LIBRARY_SOURCES,
+  LIBRARY_SOURCE_IDS,
+  getLibrarySource,
+} from "@/lib/spotify/library-sources"
+import {
+  buildMissingReport,
+  matchesToMissingInputs,
+  type MissingTrackInput,
+  type MissingReport as MissingReportData,
+} from "@/lib/export/missing-report"
+import { MissingReport } from "@/components/MissingReport"
 import { useToast } from "@/components/Toast"
 import { getJSON, setJSON } from "@/lib/storage"
 import Image from "next/image"
@@ -80,20 +92,7 @@ interface PlaylistItem {
   items: { total: number }
   snapshot_id?: string
   isLikedSongs?: boolean
-}
-
-const LIKED_SONGS_ITEM: PlaylistItem = {
-  id: LIKED_SONGS_ID,
-  name: "Liked Songs",
-  description: "Your liked tracks from Spotify",
-  images: [
-    {
-      url: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23E91E63"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>',
-    },
-  ],
-  owner: { id: "user", display_name: "You" },
-  items: { total: 0 },
-  isLikedSongs: true,
+  librarySourceId?: string
 }
 
 function formatDuration(ms: number): string {
@@ -115,6 +114,9 @@ export function Dashboard() {
   const [error, setError] = useState<string | null>(null)
   const [progressState, setProgressState] = useState<ProgressState | null>(null)
   const [likedSongsCount, setLikedSongsCount] = useState<number>(0)
+  const [sourceCounts, setSourceCounts] = useState<Record<string, number>>({})
+  const [missingReport, setMissingReport] = useState<MissingReportData | null>(null)
+  const [showMissingReport, setShowMissingReport] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [navidromePlaylists, setNavidromePlaylists] = useState<
     NavidromePlaylist[]
@@ -169,6 +171,25 @@ export function Dashboard() {
   const isExportingRef = useRef(false)
   const abortControllerRef = useRef<AbortController | null>(null)
 
+  // Best-effort fetch of counts for the non-liked library sources (saved
+  // albums, top tracks, followed artists). Each is independent so one failing
+  // (e.g. a missing scope) never blocks the others.
+  const loadLibrarySourceCounts = useCallback(async () => {
+    const others = LIBRARY_SOURCES.filter(
+      (s) => s.id !== LIBRARY_SOURCE_IDS.LIKED,
+    )
+    const results = await Promise.allSettled(
+      others.map((s) => s.fetchCount(spotifyClient)),
+    )
+    setSourceCounts((prev) => {
+      const next = { ...prev }
+      results.forEach((res, i) => {
+        if (res.status === "fulfilled") next[others[i].id] = res.value
+      })
+      return next
+    })
+  }, [])
+
   useEffect(() => {
     async function fetchData() {
       if (!spotify.isAuthenticated || !spotify.token) {
@@ -190,6 +211,8 @@ export function Dashboard() {
         } catch {
           setLikedSongsCount(0)
         }
+
+        void loadLibrarySourceCounts()
 
         if (
           navidrome.isConnected &&
@@ -228,6 +251,7 @@ export function Dashboard() {
     navidrome.credentials,
     navidrome.token,
     navidrome.clientId,
+    loadLibrarySourceCounts,
   ])
 
   useEffect(() => {
@@ -366,6 +390,8 @@ export function Dashboard() {
         } catch {
           setLikedSongsCount(0)
         }
+
+        void loadLibrarySourceCounts()
       }
 
       // Re-fetch each imported playlist to pick up the latest tracks/metadata
@@ -510,9 +536,40 @@ export function Dashboard() {
         }
       })
 
-    const allItems = [...playlistItems, ...importedItems]
+    // Library pseudo-sources (Liked Songs, Saved Albums, Top Tracks, Followed
+    // Artists). These require a Spotify connection, so only surface them when
+    // authenticated (the public-import / skip-Spotify path has no library).
+    const librarySourceItems: PlaylistTableItem[] = spotify.isAuthenticated
+      ? LIBRARY_SOURCES.map((src) => {
+          const count =
+            src.id === LIBRARY_SOURCE_IDS.LIKED
+              ? likedSongsCount
+              : sourceCounts[src.id] ?? 0
+          const cachedData = trackExportCache.get(src.id)
+          return {
+            id: src.id,
+            name: src.name,
+            images: [],
+            owner: { display_name: "You" },
+            items: { total: count },
+            snapshot_id: "",
+            isLikedSongs: src.id === LIBRARY_SOURCE_IDS.LIKED,
+            librarySourceId: src.id,
+            gradient: src.gradient,
+            iconPath: src.iconPath,
+            countUnit: src.countUnit,
+            selected: selectedIds.has(src.id),
+            exportStatus: cachedData?.exportedAt ? "exported" : "none",
+            navidromePlaylistId: cachedData?.navidromePlaylistId,
+            lastExportedAt: cachedData?.exportedAt,
+            public: false,
+          }
+        })
+      : []
+
+    const allItems = [...librarySourceItems, ...playlistItems, ...importedItems]
     setTableItems(allItems)
-  }, [playlists, navidromePlaylists, selectedIds, likedSongsCount, trackExportCache, playlistCreatedDates, importedPlaylists])
+  }, [playlists, navidromePlaylists, selectedIds, likedSongsCount, sourceCounts, spotify.isAuthenticated, trackExportCache, playlistCreatedDates, importedPlaylists])
 
   // Background fetch of playlist created dates (earliest added_at)
   // Fetches progressively — updates state after each playlist for immediate UI feedback
@@ -771,7 +828,7 @@ export function Dashboard() {
   const uniqueOwners = useMemo(() => {
     const owners = new Set<string>()
     tableItems.forEach((item) => {
-      if (!item.isLikedSongs) {
+      if (!item.librarySourceId) {
         owners.add(item.owner.display_name)
       }
     })
@@ -810,7 +867,7 @@ export function Dashboard() {
     // Visibility filter (public/private)
     if (visibilityFilter !== "all") {
       result = result.filter((item) => {
-        if (item.isLikedSongs) return visibilityFilter === "private"
+        if (item.librarySourceId) return visibilityFilter === "private"
         if (visibilityFilter === "public") return item.public === true
         if (visibilityFilter === "private") return item.public === false || item.public === null
         return true
@@ -837,6 +894,19 @@ export function Dashboard() {
     }
 
     result.sort((a, b) => {
+      // Always keep library pseudo-sources pinned at the top, in registry order.
+      const aLib = a.librarySourceId
+        ? LIBRARY_SOURCES.findIndex((s) => s.id === a.librarySourceId)
+        : -1
+      const bLib = b.librarySourceId
+        ? LIBRARY_SOURCES.findIndex((s) => s.id === b.librarySourceId)
+        : -1
+      if (aLib !== -1 || bLib !== -1) {
+        if (aLib === -1) return 1
+        if (bLib === -1) return -1
+        return aLib - bLib
+      }
+
       let comparison = 0
       switch (sortColumn) {
         case "name":
@@ -928,21 +998,35 @@ export function Dashboard() {
       setError("Please connect Navidrome to export playlists.")
       return
     }
-    const needsSpotify = selectedIds.has(LIKED_SONGS_ID) || playlists.some((p) => selectedIds.has(p.id))
+    const selectedLibrarySources = LIBRARY_SOURCES.filter((s) =>
+      selectedIds.has(s.id),
+    )
+    const needsSpotify =
+      selectedLibrarySources.length > 0 ||
+      playlists.some((p) => selectedIds.has(p.id))
     if (needsSpotify && (!spotify.isAuthenticated || !spotify.token)) {
-      setError("Please connect Spotify to export your own playlists.")
+      setError("Please connect Spotify to export your library or own playlists.")
       return
     }
 
-    const hasLikedSongs = selectedIds.has(LIKED_SONGS_ID)
     const selectedPlaylists = playlists.filter((p) => selectedIds.has(p.id))
     const selectedImported = importedPlaylists.filter((p) => selectedIds.has(p.id))
     const itemsToExport: ExportableItem[] = []
 
-    if (hasLikedSongs) {
+    for (const src of selectedLibrarySources) {
+      const count =
+        src.id === LIBRARY_SOURCE_IDS.LIKED
+          ? likedSongsCount
+          : sourceCounts[src.id] ?? 0
       itemsToExport.push({
-        ...LIKED_SONGS_ITEM,
-        items: { total: likedSongsCount },
+        id: src.id,
+        name: src.name,
+        description: src.description,
+        images: [],
+        owner: { id: "user", display_name: "You" },
+        items: { total: count },
+        isLikedSongs: src.id === LIBRARY_SOURCE_IDS.LIKED,
+        librarySourceId: src.id,
       })
     }
     itemsToExport.push(...selectedPlaylists)
@@ -985,6 +1069,12 @@ export function Dashboard() {
     )
     setCurrentUnmatchedPlaylistId(null)
     setUnmatchedSongs([])
+    setMissingReport(null)
+    setShowMissingReport(false)
+
+    // Accumulates every unmatched/ambiguous track across the whole batch so we
+    // can produce one consolidated "still need to get" report at the end.
+    const allMissingInputs: MissingTrackInput[] = []
 
     try {
       if (spotify.token) {
@@ -1043,22 +1133,42 @@ export function Dashboard() {
         )
 
         let tracks: SpotifyTrack[]
-        let isLikedSongs = false
+        // "Favorites-style" sources (Liked Songs, Saved Albums, Top Tracks,
+        // Followed Artists) match against the library and star matches, rather
+        // than creating a Navidrome playlist.
+        let isFavoritesStyle = false
         let cachedData: PlaylistExportData | undefined = undefined
         let useDifferentialMatching = false
 
-        if ("isLikedSongs" in item && item.isLikedSongs) {
-          const savedTracks = await spotifyClient.getAllSavedTracks(signal)
-          tracks = savedTracks.map((t) => t.track).filter((t) => t != null)
-          isLikedSongs = true
+        const librarySource =
+          "librarySourceId" in item && item.librarySourceId
+            ? getLibrarySource(item.librarySourceId)
+            : undefined
 
-          // Check for cached export data (favorites have no navidromePlaylistId,
-          // so differential matching engages purely on cache presence)
+        if (librarySource) {
+          tracks = await librarySource.fetchTracks(spotifyClient, {
+            signal,
+            market: spotify.user?.country,
+            onProgress: (completed, total) => {
+              progress = updateProgress(progress, {
+                phase: "matching",
+                progress: {
+                  current: completed,
+                  total,
+                  percent: total > 0 ? Math.round((completed / total) * 100) : 0,
+                },
+              })
+              setProgressState({ ...progress })
+            },
+          })
+          isFavoritesStyle = true
+
+          // Favorites have no navidromePlaylistId, so differential matching
+          // engages purely on cache presence.
           cachedData = loadPlaylistExportData(item.id)
           useDifferentialMatching = !forceExportPlaylists && !!cachedData?.exportedAt
         } else if ("isImported" in item && item.isImported) {
           tracks = item.tracks
-          isLikedSongs = false
           cachedData = loadPlaylistExportData(item.id)
           useDifferentialMatching = false
         } else {
@@ -1219,7 +1329,7 @@ export function Dashboard() {
         )
 
         // Save track status to cache after matching
-        if (!isLikedSongs) {
+        if (!isFavoritesStyle) {
           const tracksData: Record<string, TrackExportStatus> = {}
           let matchedCount = 0
           let unmatchedCount = 0
@@ -1319,6 +1429,9 @@ export function Dashboard() {
         setCurrentUnmatchedPlaylistId(item.id)
         setUnmatchedSongs(unmatchedSongsList)
 
+        // Feed the consolidated cross-batch "still need to get" report.
+        allMissingInputs.push(...matchesToMissingInputs(matches, item.name))
+
         progress = updateProgress(progress, {
           phase: "exporting",
           progress: { current: 0, total: matches.length, percent: 0 },
@@ -1334,7 +1447,7 @@ export function Dashboard() {
           }
         }
 
-        if (isLikedSongs) {
+        if (isFavoritesStyle) {
           const result = await favoritesExporter.exportFavorites(matches, {
             skipUnmatched: false,
             signal,
@@ -1599,6 +1712,13 @@ export function Dashboard() {
           setIsExporting(false)
         }
       }
+
+      // Build the consolidated "still need to get" report for the whole batch.
+      const report = buildMissingReport(allMissingInputs)
+      setMissingReport(report)
+      if (report.totalMissing > 0) {
+        setShowMissingReport(true)
+      }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : "Export failed"
 
@@ -1682,9 +1802,13 @@ export function Dashboard() {
   const confirmationPlaylists: PlaylistInfo[] = useMemo(() => {
     const result: PlaylistInfo[] = []
 
-    if (selectedIds.has(LIKED_SONGS_ID)) {
-      result.push({ name: "Liked Songs", trackCount: likedSongsCount })
-    }
+    LIBRARY_SOURCES.filter((s) => selectedIds.has(s.id)).forEach((s) => {
+      const count =
+        s.id === LIBRARY_SOURCE_IDS.LIKED
+          ? likedSongsCount
+          : sourceCounts[s.id] ?? 0
+      result.push({ name: s.name, trackCount: count })
+    })
 
     playlists
       .filter((p) => selectedIds.has(p.id))
@@ -1699,7 +1823,7 @@ export function Dashboard() {
       })
 
     return result
-  }, [selectedIds, likedSongsCount, playlists, importedPlaylists])
+  }, [selectedIds, likedSongsCount, sourceCounts, playlists, importedPlaylists])
 
   const playlistGroups: PlaylistGroup[] = useMemo(() => {
     const importedById = new Map(importedPlaylists.map((p) => [p.id, p]))
@@ -1817,6 +1941,22 @@ export function Dashboard() {
               />
             </svg>
           </button>
+          {missingReport && missingReport.totalMissing > 0 && !isExporting && (
+            <button
+              onClick={() => setShowMissingReport(true)}
+              aria-label="Show what's missing from Navidrome"
+              title="Show what's still missing from Navidrome"
+              className="inline-flex items-center gap-2 rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 text-sm font-medium text-amber-700 dark:text-amber-300 shadow-sm hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-all cursor-pointer"
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              <span className="hidden sm:inline">Missing</span>
+              <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 text-xs font-bold text-white bg-amber-500 rounded-full">
+                {missingReport.totalMissing}
+              </span>
+            </button>
+          )}
           <button
             onClick={
               isExporting ? handleCancelExport : () => setShowConfirmation(true)
@@ -1940,7 +2080,22 @@ export function Dashboard() {
         forceExportPlaylists={forceExportPlaylists}
         onForceExportChange={handleForceExportChange}
       />
-      
+
+      {showMissingReport && missingReport && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/50 dark:bg-black/70 backdrop-blur-sm"
+            onClick={() => setShowMissingReport(false)}
+          />
+          <div className="relative w-full max-w-2xl">
+            <MissingReport
+              report={missingReport}
+              onClose={() => setShowMissingReport(false)}
+            />
+          </div>
+        </div>
+      )}
+
       <ExportLayoutManager
         layout={layout}
         selectedPlaylistsSection={selectedPlaylistsSection}

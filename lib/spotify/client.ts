@@ -1,4 +1,4 @@
-import { SpotifyPlaylistsResponse, SpotifyTracksResponse, SpotifyUser, SpotifyToken, SpotifyPlaylist, SpotifyPlaylistTrack, SpotifySavedTracksResponse, SpotifySavedTrack } from '@/types';
+import { SpotifyPlaylistsResponse, SpotifyTracksResponse, SpotifyUser, SpotifyToken, SpotifyPlaylist, SpotifyPlaylistTrack, SpotifySavedTracksResponse, SpotifySavedTrack, SpotifyTrack, SpotifySavedAlbumsResponse, SpotifyTopTracksResponse, SpotifyFollowedArtistsResponse, SpotifyArtist, SpotifyArtistTopTracksResponse } from '@/types';
 import { isTokenExpired } from './token-storage';
 import { SPOTIFY_STORAGE_KEY } from '@/types/auth-context';
 import { spotifyRateLimiter } from './rate-limiter';
@@ -87,6 +87,175 @@ export class SpotifyClient {
     const response = await this.fetch(url, signal, {}, bypassCache);
     const data: SpotifySavedTracksResponse = await response.json();
     return data.total;
+  }
+
+  // --- Saved Albums ---------------------------------------------------------
+
+  async getSavedAlbums(limit: number = 50, offset: number = 0, signal?: AbortSignal, bypassCache: boolean = false): Promise<SpotifySavedAlbumsResponse> {
+    await spotifyRateLimiter.acquire();
+    const params = new URLSearchParams({ limit: limit.toString(), offset: offset.toString() });
+    if (bypassCache) {
+      params.append('_t', Date.now().toString());
+    }
+    const response = await this.fetch(`/me/albums?${params.toString()}`, signal, {}, bypassCache);
+    return response.json();
+  }
+
+  async getSavedAlbumsCount(signal?: AbortSignal, bypassCache: boolean = false): Promise<number> {
+    await spotifyRateLimiter.acquire();
+    const url = bypassCache ? `/me/albums?limit=1&_t=${Date.now()}` : '/me/albums?limit=1';
+    const response = await this.fetch(url, signal, {}, bypassCache);
+    const data: SpotifySavedAlbumsResponse = await response.json();
+    return data.total;
+  }
+
+  /**
+   * Fetches every track from every saved album. Album track objects from the
+   * Spotify API are "simplified" — they omit the `album` and `external_ids`
+   * (ISRC) fields — so we re-attach the parent album here. Matching then falls
+   * back to fuzzy/strict for these since ISRC is unavailable.
+   */
+  async getAllSavedAlbumTracks(signal?: AbortSignal): Promise<SpotifyTrack[]> {
+    const allTracks: SpotifyTrack[] = [];
+    let offset = 0;
+    const limit = 50;
+
+    while (true) {
+      const response = await this.getSavedAlbums(limit, offset, signal);
+
+      for (const { album } of response.items) {
+        const albumRef = {
+          id: album.id,
+          name: album.name,
+          release_date: album.release_date,
+        };
+
+        const enriched = (album.tracks?.items ?? []).map((t) => ({
+          ...t,
+          album: t.album ?? albumRef,
+          external_ids: t.external_ids ?? {},
+        }));
+        allTracks.push(...enriched);
+
+        // Albums with >50 tracks paginate their own track list.
+        let trackOffset = album.tracks?.items?.length ?? 0;
+        while (album.tracks?.next && trackOffset < (album.tracks?.total ?? 0)) {
+          await spotifyRateLimiter.acquire();
+          const params = new URLSearchParams({ limit: '50', offset: trackOffset.toString() });
+          const trackResp = await this.fetch(`/albums/${album.id}/tracks?${params.toString()}`, signal);
+          const trackData = await trackResp.json();
+          const moreTracks = (trackData.items ?? []).map((t: SpotifyTrack) => ({
+            ...t,
+            album: t.album ?? albumRef,
+            external_ids: t.external_ids ?? {},
+          }));
+          allTracks.push(...moreTracks);
+          trackOffset += moreTracks.length;
+          if (!trackData.next) break;
+        }
+      }
+
+      if (!response.next) break;
+      offset += limit;
+    }
+
+    return allTracks;
+  }
+
+  // --- Top Tracks -----------------------------------------------------------
+
+  async getTopTracks(timeRange: 'short_term' | 'medium_term' | 'long_term' = 'medium_term', limit: number = 50, offset: number = 0, signal?: AbortSignal): Promise<SpotifyTopTracksResponse> {
+    await spotifyRateLimiter.acquire();
+    const params = new URLSearchParams({ time_range: timeRange, limit: limit.toString(), offset: offset.toString() });
+    const response = await this.fetch(`/me/top/tracks?${params.toString()}`, signal);
+    return response.json();
+  }
+
+  /**
+   * Fetches the user's top tracks. The Spotify API caps this at 99 (offset
+   * 0–49 over two pages); we gather the union across pages, deduped by id.
+   */
+  async getAllTopTracks(timeRange: 'short_term' | 'medium_term' | 'long_term' = 'medium_term', signal?: AbortSignal): Promise<SpotifyTrack[]> {
+    const byId = new Map<string, SpotifyTrack>();
+    const limit = 50;
+    for (let offset = 0; offset <= 49; offset += limit) {
+      const response = await this.getTopTracks(timeRange, Math.min(limit, 50 - offset), offset, signal);
+      for (const track of response.items) {
+        if (track) byId.set(track.id, track);
+      }
+      if (!response.next) break;
+    }
+    return Array.from(byId.values());
+  }
+
+  async getTopTracksCount(timeRange: 'short_term' | 'medium_term' | 'long_term' = 'medium_term', signal?: AbortSignal): Promise<number> {
+    const response = await this.getTopTracks(timeRange, 1, 0, signal);
+    return Math.min(response.total, 99);
+  }
+
+  // --- Followed Artists -----------------------------------------------------
+
+  async getFollowedArtists(after?: string, limit: number = 50, signal?: AbortSignal): Promise<SpotifyFollowedArtistsResponse> {
+    await spotifyRateLimiter.acquire();
+    const params = new URLSearchParams({ type: 'artist', limit: limit.toString() });
+    if (after) params.append('after', after);
+    const response = await this.fetch(`/me/following?${params.toString()}`, signal);
+    return response.json();
+  }
+
+  async getAllFollowedArtists(signal?: AbortSignal): Promise<SpotifyArtist[]> {
+    const artists: SpotifyArtist[] = [];
+    let after: string | undefined;
+
+    while (true) {
+      const response = await this.getFollowedArtists(after, 50, signal);
+      artists.push(...response.artists.items);
+      after = response.artists.cursors?.after;
+      if (!after || !response.artists.next) break;
+    }
+
+    return artists;
+  }
+
+  async getFollowedArtistsCount(signal?: AbortSignal): Promise<number> {
+    const response = await this.getFollowedArtists(undefined, 1, signal);
+    return response.artists.total;
+  }
+
+  async getArtistTopTracks(artistId: string, market: string = 'US', signal?: AbortSignal): Promise<SpotifyTrack[]> {
+    await spotifyRateLimiter.acquire();
+    const params = new URLSearchParams({ market });
+    const response = await this.fetch(`/artists/${artistId}/top-tracks?${params.toString()}`, signal);
+    const data: SpotifyArtistTopTracksResponse = await response.json();
+    return data.tracks ?? [];
+  }
+
+  /**
+   * Gathers the top tracks for every followed artist, deduped by track id.
+   * `market` defaults to the authenticated user's country when available.
+   */
+  async getAllFollowedArtistsTopTracks(
+    market: string = 'US',
+    signal?: AbortSignal,
+    onProgress?: (completed: number, total: number) => void,
+  ): Promise<SpotifyTrack[]> {
+    const artists = await this.getAllFollowedArtists(signal);
+    const byId = new Map<string, SpotifyTrack>();
+
+    for (let i = 0; i < artists.length; i++) {
+      if (signal?.aborted) break;
+      try {
+        const tracks = await this.getArtistTopTracks(artists[i].id, market, signal);
+        for (const track of tracks) {
+          if (track) byId.set(track.id, track);
+        }
+      } catch {
+        // Skip artists whose top tracks fail to load
+      }
+      onProgress?.(i + 1, artists.length);
+    }
+
+    return Array.from(byId.values());
   }
 
   async getAllPlaylists(signal?: AbortSignal, bypassCache: boolean = false): Promise<SpotifyPlaylist[]> {
